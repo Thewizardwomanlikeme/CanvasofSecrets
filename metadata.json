@@ -1,0 +1,5 @@
+{
+  "name": "Vitra Arcana",
+  "description": "A scholarly Renaissance-inspired vault for secrets and alchemical transcriptions.",
+  "requestFramePermissions": ["camera"]
+}
