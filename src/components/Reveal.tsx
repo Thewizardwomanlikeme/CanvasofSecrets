@@ -2,7 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { Camera } from './Camera';
 import { decodeMessage } from '../utils/steganography';
-import { deriveKeyFromEmbedding, decryptMessage } from '../utils/faceKey';
+import { deriveKeyFromEmbedding, deriveKeyWithSketch, decryptMessage } from '../utils/faceKey';
 import { 
   Eye, 
   Upload, 
@@ -58,16 +58,19 @@ export const Reveal: React.FC = () => {
       canvas.height = img.height;
       ctx.drawImage(img, 0, 0);
 
-      // 1. Derive key from face
-      const key = deriveKeyFromEmbedding(faceEmbedding);
+      // 1. Decode from image
+      const decoded = decodeMessage(canvas);
       
-      // 2. Decode from image
-      // We pass the key signature to verify
-      const encrypted = decodeMessage(canvas, key);
-      
-      if (!encrypted) {
-        throw new Error('No secret found or face signature mismatch.');
+      if (!decoded) {
+        throw new Error('No secret found in this inscribed vessel.');
       }
+      
+      const { message: encrypted, sketch } = decoded;
+
+      // 2. Derive key from face via Locality Sensitive Hashing (LSH) and sketch
+      const key = sketch 
+        ? deriveKeyWithSketch(faceEmbedding, sketch) 
+        : deriveKeyFromEmbedding(faceEmbedding);
       
       // 3. Decrypt message
       const decrypted = decryptMessage(encrypted, key);
@@ -79,7 +82,7 @@ export const Reveal: React.FC = () => {
       }
       
     } catch (err: any) {
-      console.error('Decoding error:', err);
+      console.error('Detailed Decoding error:', err);
       setError(err.message || 'Failed to reveal the secret.');
     } finally {
       setIsDecoding(false);

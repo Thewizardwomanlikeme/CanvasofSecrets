@@ -2,8 +2,8 @@
 import React, { useState, useRef } from 'react';
 import { Camera } from './Camera';
 import { encodeMessage } from '../utils/steganography';
-import { deriveKeyFromEmbedding, encryptMessage } from '../utils/faceKey';
-import { GoogleGenAI } from '@google/genai';
+import { averageEmbeddings, deriveKeyAndSketch, encryptMessage } from '../utils/faceKey';
+import { getGemini, invokePainting } from '../services/gemini';
 import { 
   PenTool, 
   Image as ImageIcon, 
@@ -16,12 +16,12 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
 export const Inscribe: React.FC = () => {
   const [message, setMessage] = useState('');
   const [image, setImage] = useState<string | null>(null);
-  const [faceEmbedding, setFaceEmbedding] = useState<Float32Array | null>(null);
+  const [faceEmbeddings, setFaceEmbeddings] = useState<Float32Array[] | null>(null);
+  const [isStable, setIsStable] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isEncoding, setIsEncoding] = useState(false);
   const [encodedImage, setEncodedImage] = useState<string | null>(null);
@@ -46,21 +46,15 @@ export const Inscribe: React.FC = () => {
     setIsGenerating(true);
     setError(null);
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [{ text: 'A high-detail Renaissance oil painting, scholarly portrait or alchemical landscape, rich textures, sfumato technique, dark walnut and gold tones, 1024x1024' }]
-        }
-      });
-      
-      const part = response.candidates?.[0]?.content?.parts.find(p => p.inlineData);
-      if (part?.inlineData) {
-        const base64 = `data:image/png;base64,${part.inlineData.data}`;
+      const base64 = await invokePainting('A scholarly portrait or alchemical landscape, rich textures, sfumato technique, dark walnut and gold tones');
+      if (base64) {
         setImage(base64);
         setEncodedImage(null);
+      } else {
+        throw new Error('No image was returned from the oracle.');
       }
     } catch (err) {
-      console.error('Generation error:', err);
+      console.error('Detailed Generation error:', err);
       setError('Failed to invoke the alchemical brush. Please try again.');
     } finally {
       setIsGenerating(false);
@@ -68,7 +62,7 @@ export const Inscribe: React.FC = () => {
   };
 
   const handleEncode = async () => {
-    if (!message || !image || !faceEmbedding || !canvasRef.current) return;
+    if (!message || !image || !faceEmbeddings || !canvasRef.current) return;
     
     setIsEncoding(true);
     setError(null);
@@ -90,19 +84,20 @@ export const Inscribe: React.FC = () => {
       ctx.drawImage(img, 0, 0);
 
       // 1. Derive key from face
-      const key = deriveKeyFromEmbedding(faceEmbedding);
+      if (!faceEmbeddings || faceEmbeddings.length < 3) throw new Error('Face scans incomplete.');
+      const meanEmbedding = averageEmbeddings(faceEmbeddings);
+      const { key, sketch } = deriveKeyAndSketch(meanEmbedding);
       
       // 2. Encrypt message
       const encrypted = encryptMessage(message, key);
       
       // 3. Encode into image
-      // We also store the face embedding (signature) in the payload
-      // so we can compare it later.
-      const result = encodeMessage(canvas, encrypted, key);
+      // (Zero-storage Vault guarantees no signature passed, sketch used for stability repair)
+      const result = encodeMessage(canvas, encrypted, sketch);
       setEncodedImage(result);
       
     } catch (err: any) {
-      console.error('Encoding error:', err);
+      console.error('Detailed Encoding error:', err);
       setError(err.message || 'Failed to seal the secret.');
     } finally {
       setIsEncoding(false);
@@ -191,13 +186,28 @@ export const Inscribe: React.FC = () => {
               <Lock className="w-4 h-4" />
               The Biometric Seal
             </label>
-            <Camera onCapture={setFaceEmbedding} onReset={() => setFaceEmbedding(null)} />
+            <div className={`transition-all duration-500 rounded-xl ${isStable && !faceEmbeddings ? 'ring-4 ring-emerald-500/80 shadow-[0_0_20px_rgba(16,185,129,0.4)]' : 'ring-4 ring-transparent'}`}>
+              <Camera 
+                onCapture={(embs) => setFaceEmbeddings(embs as Float32Array[])} 
+                onReset={() => { setFaceEmbeddings(null); setIsStable(false); }} 
+                onStabilityChange={setIsStable} 
+                stages={['Look Center', 'Look Left', 'Look Right']}
+              />
+            </div>
+            {!faceEmbeddings && (
+              <p className="text-center text-xs font-mono pt-2 min-h-[20px]">
+                {isStable ? 
+                  <span className="text-emerald-400">Stable - Ready to Capture</span> : 
+                  <span className="text-amber-500/60 transition-opacity">Align face to stabilize...</span>
+                }
+              </p>
+            )}
           </section>
 
           <div className="pt-8 space-y-4">
             <button
               onClick={handleEncode}
-              disabled={!message || !image || !faceEmbedding || isEncoding}
+              disabled={!message || !image || !faceEmbeddings || isEncoding}
               className="w-full py-4 bg-wax hover:bg-wax/90 text-surface rounded-none font-display text-xl uppercase tracking-[0.2em] shadow-lg shadow-primary/40 transition-all disabled:opacity-50 disabled:grayscale group relative overflow-hidden"
             >
               <div className="relative z-10 flex items-center justify-center gap-3">

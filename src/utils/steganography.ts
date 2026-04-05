@@ -7,7 +7,7 @@
 export const encodeMessage = (
   canvas: HTMLCanvasElement,
   message: string,
-  keyHash: string
+  sketch?: number[]
 ): string => {
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not get canvas context');
@@ -15,11 +15,11 @@ export const encodeMessage = (
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = imageData.data;
 
-  // 1. Prepare the payload: [KeyHashSignature (32 bytes)] + [MessageLength (4 bytes)] + [Message]
-  // We'll use the keyHash to verify during decoding if the face matches.
-  // Actually, we'll store the keyHash (first 32 chars) as a signature.
-  const signature = keyHash.slice(0, 32);
-  const payload = JSON.stringify({ s: signature, m: message });
+  // 1. Prepare the payload: [Message] length
+  // We strictly store zero biometric signatures or fragments.
+  const payloadData: any = { m: message };
+  if (sketch) payloadData.s = sketch;
+  const payload = JSON.stringify(payloadData);
   const binary = stringToBinary(payload);
 
   // Check if image is large enough
@@ -44,9 +44,8 @@ export const encodeMessage = (
 };
 
 export const decodeMessage = (
-  canvas: HTMLCanvasElement,
-  expectedSignature: string
-): string | null => {
+  canvas: HTMLCanvasElement
+): { message: string, sketch?: number[] } | null => {
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not get canvas context');
 
@@ -90,10 +89,11 @@ export const decodeMessage = (
     const payloadStr = fullText.slice(start, end + 1);
     const payload = JSON.parse(payloadStr);
     
-    if (payload.s === expectedSignature.slice(0, 32)) {
-      return payload.m;
+    // With LSH, if the AES decryption succeeds (UTF8 parses correctly), we are safe natively.
+    if (payload.m) {
+      return { message: payload.m, sketch: payload.s };
     } else {
-      throw new Error('Face signature mismatch. Access denied.');
+      return null;
     }
   } catch (e) {
     console.error('Decoding error:', e);

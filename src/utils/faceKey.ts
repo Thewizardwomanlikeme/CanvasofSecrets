@@ -37,29 +37,71 @@ export const getFaceEmbedding = async (
   return detection ? detection.descriptor : null;
 };
 
-/**
- * Derives a stable key from a face embedding.
- * Since embeddings vary slightly, we'll quantize the values or use a threshold.
- * For a "Key", we'll hash the descriptor.
- * NOTE: Hashing is sensitive. For a real app, we'd use a fuzzy extractor.
- * For this demo, we'll use a signature-based approach:
- * 1. Store the descriptor (signature) in the image.
- * 2. During decode, compare current descriptor with stored signature.
- * 3. If match (Euclidean distance < 0.6), use the stored signature to derive the key.
- */
-export const deriveKeyFromEmbedding = (embedding: Float32Array): string => {
-  // Convert Float32Array to string and hash it
-  const embeddingStr = Array.from(embedding).map(v => v.toFixed(4)).join(',');
-  return CryptoJS.SHA256(embeddingStr).toString();
+export const averageEmbeddings = (embeddings: Float32Array[]): Float32Array => {
+  if (embeddings.length === 0) return new Float32Array();
+  const length = embeddings[0].length;
+  const mean = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    let sum = 0;
+    for (const emb of embeddings) {
+      sum += emb[i];
+    }
+    mean[i] = sum / embeddings.length;
+  }
+  return mean;
 };
 
-export const compareEmbeddings = (
-  e1: Float32Array,
-  e2: Float32Array,
-  threshold = 0.6
-): boolean => {
-  const distance = faceapi.euclideanDistance(e1, e2);
-  return distance < threshold;
+export const euclideanDistance = (a: Float32Array, b: Float32Array): number => {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) {
+    sum += Math.pow(a[i] - b[i], 2);
+  }
+  return Math.sqrt(sum);
+};
+
+export const minMaxScale = (descriptor: Float32Array): Float32Array => {
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < descriptor.length; i++) {
+    if (descriptor[i] < min) min = descriptor[i];
+    if (descriptor[i] > max) max = descriptor[i];
+  }
+  const range = max - min;
+  const scaled = new Float32Array(descriptor.length);
+  if (range === 0) return descriptor;
+  for (let i = 0; i < descriptor.length; i++) {
+    scaled[i] = (descriptor[i] - min) / range;
+  }
+  return scaled;
+};
+
+export const deriveKeyAndSketch = (embedding: Float32Array): { key: string, sketch: number[] } => {
+  const scaled = minMaxScale(embedding);
+  const sketch: number[] = [];
+  let bitstring = '';
+  for (let i = 0; i < scaled.length; i++) {
+    const bit = scaled[i] >= 0.5 ? 1 : 0;
+    bitstring += bit.toString();
+    sketch.push(Number((scaled[i] - bit).toFixed(4)));
+  }
+  const key = CryptoJS.SHA256(bitstring).toString();
+  return { key, sketch };
+};
+
+export const deriveKeyWithSketch = (embedding: Float32Array, sketch: number[]): string => {
+  const scaled = minMaxScale(embedding);
+  let bitstring = '';
+  for (let i = 0; i < scaled.length; i++) {
+    const corrected = scaled[i] - sketch[i];
+    const bit = corrected >= 0.5 ? 1 : 0;
+    bitstring += bit.toString();
+  }
+  return CryptoJS.SHA256(bitstring).toString();
+};
+
+export const deriveKeyFromEmbedding = (embedding: Float32Array): string => {
+  const { key } = deriveKeyAndSketch(embedding);
+  return key;
 };
 
 export const encryptMessage = (message: string, key: string): string => {
