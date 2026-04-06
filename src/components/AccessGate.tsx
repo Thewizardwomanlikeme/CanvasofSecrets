@@ -2,19 +2,22 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/VitraAuthContext';
 import { Camera } from './Camera';
-import { deriveKeyAndSketch, deriveKeyWithSketch } from '../utils/faceKey';
+import { deriveKeyAndSketch, deriveKeyWithSketch, encryptMessage, decryptMessage } from '../utils/faceKey';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShieldCheck, UserPlus, LockOpen, Loader2, PenTool, ShieldAlert } from 'lucide-react';
 
+const CHALLENGE_MESSAGE = "[IDENTITY_VERIFIED]";
+
 export const AccessGate: React.FC = () => {
-  const { profile, enroll, login } = useAuth();
+  const { profile, enroll, login, burnIdentity } = useAuth();
   const [name, setName] = useState('');
   const [faceEmbedding, setFaceEmbedding] = useState<Float32Array | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   // Decide if we are in Enroll or Login mode
-  const mode = profile ? 'LOGIN' : 'ENROLL';
+  // If profile is missing identityToken (old version), we force a new Enrollment (Upgrade)
+  const mode = (profile && profile.identityToken) ? 'LOGIN' : 'ENROLL';
 
   const handleAction = async () => {
     if (!faceEmbedding) return;
@@ -27,16 +30,19 @@ export const AccessGate: React.FC = () => {
         if (!name.trim()) throw new Error('Specify your scholarly title (Name).');
         
         // Derive Sketch from initial face scan
-        const { sketch } = deriveKeyAndSketch(faceEmbedding);
-        enroll(name, sketch);
+        const { key, sketch } = deriveKeyAndSketch(faceEmbedding);
+        // Create a challenge-response token
+        const identityToken = encryptMessage(CHALLENGE_MESSAGE, key);
+        enroll(name, sketch, identityToken);
       } else {
         // Biometric Login: Use stored sketch to reconstruct key
-        if (!profile?.sketch) throw new Error('Biometric sketch not found.');
+        if (!profile?.sketch || !profile?.identityToken) throw new Error('Biometric credentials incomplete.');
         
         const key = deriveKeyWithSketch(faceEmbedding, profile.sketch);
+        const decrypted = decryptMessage(profile.identityToken, key);
         
-        // If key reconstruction was stable, we log in
-        if (key) {
+        // If key reconstruction allows decryption of the identity token, we log in
+        if (decrypted === CHALLENGE_MESSAGE) {
           login();
         } else {
           throw new Error('Biometric mismatch. Identity verification failed.');
@@ -119,14 +125,29 @@ export const AccessGate: React.FC = () => {
             </button>
 
             {error && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="flex items-center justify-center gap-2 text-wax font-mono text-sm italic py-2"
-              >
-                <ShieldAlert className="w-4 h-4" />
-                <span>{error}</span>
-              </motion.div>
+              <div className="space-y-4">
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center justify-center gap-2 text-wax font-mono text-sm italic py-2"
+                >
+                  <ShieldAlert className="w-4 h-4" />
+                  <span>{error}</span>
+                </motion.div>
+                
+                {mode === 'LOGIN' && (
+                  <button
+                    onClick={() => {
+                        if (confirm("This will permanently clear your current identity. Are you sure?")) {
+                          burnIdentity();
+                        }
+                    }}
+                    className="w-full text-[10px] text-primary/40 hover:text-wax/60 uppercase tracking-widest font-mono transition-colors border-t border-primary/5 pt-4 cursor-pointer"
+                  >
+                    Biometric Credentials Incomplete? Reset Identity
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>

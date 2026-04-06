@@ -76,108 +76,113 @@ export const Reveal: React.FC = () => {
       // 3. Decrypt message
       const decrypted = decryptMessage(encrypted, key);
       
-      if (decrypted) {
-        setSecretMessage(decrypted);
+        if (decrypted) {
+          setSecretMessage(decrypted);
+          
+          // Save to Vault Memory (IndexedDB)
+          // Creating a small thumbnail (max 400px) from the full image
+          const thumbnail = await createThumbnail(image);
+          
+          const newItem = {
+            id: Date.now().toString(),
+            message: decrypted,
+            timestamp: new Date().toISOString(),
+            imageThumbnail: thumbnail
+          };
+          
+          await addVaultItem(newItem);
+          console.log('Secret successfully secured in The Vault.');
+          
+        } else {
+          throw new Error('Biometric Identity Mismatch. The face detected does not hold the key to this arcana.');
+        }
         
-        // Save to Vault Memory (IndexedDB)
-        // Creating a small thumbnail (max 400px) from the full image
-        const thumbnail = await createThumbnail(image);
-        
-        const newItem = {
-          id: Date.now().toString(),
-          message: decrypted,
-          timestamp: new Date().toISOString(),
-          imageThumbnail: thumbnail
-        };
-        
-        await addVaultItem(newItem);
-        console.log('Secret successfully secured in The Vault.');
-        
-      } else {
-        throw new Error('Decryption failed. The key derived from your face is incorrect.');
+      } catch (err: any) {
+        console.error('Detailed Decoding error:', err);
+        setError(err.message || 'Failed to reveal the secret.');
+      } finally {
+        setIsDecoding(false);
       }
-      
-    } catch (err: any) {
-      console.error('Detailed Decoding error:', err);
-      setError(err.message || 'Failed to reveal the secret.');
-    } finally {
-      setIsDecoding(false);
-    }
-  };
-
-  return (
-    <div className="max-w-4xl mx-auto p-6 space-y-12">
-      <header className="text-center space-y-2">
-        <h2 className="text-4xl font-display text-primary tracking-tighter uppercase italic">Reveal Arcana</h2>
-        <p className="text-secondary/60 font-mono text-xs uppercase tracking-[0.3em]">Unlock the whispers hidden within the canvas</p>
-      </header>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-        {/* Left Column: Image Upload */}
-        <div className="space-y-8">
-          <section className="space-y-4">
-            <label className="flex items-center gap-2 text-primary/80 font-display text-sm uppercase tracking-widest">
-              <Upload className="w-4 h-4" />
-              The Encoded Vessel
-            </label>
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              className={`relative aspect-square rounded-none overflow-hidden border-2 border-dashed border-primary/20 bg-surface-low hover:bg-surface-highest transition-all cursor-pointer group flex flex-col items-center justify-center gap-4 ${image ? 'border-solid border-secondary/50' : ''}`}
-            >
-              {image ? (
-                <img src={image} alt="Encoded Vessel" className="w-full h-full object-cover" />
-              ) : (
-                <>
-                  <div className="w-16 h-16 rounded-full bg-secondary/10 flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <Upload className="w-8 h-8 text-secondary/50" />
-                  </div>
-                  <span className="text-secondary/40 text-xs uppercase tracking-widest font-display">Upload Sealed Image</span>
-                </>
+    };
+  
+    return (
+      <div className="max-w-4xl mx-auto p-6 space-y-12">
+        <header className="text-center space-y-2">
+          <h2 className="text-4xl font-display text-primary tracking-tighter uppercase italic">Reveal Arcana</h2>
+          <p className="text-secondary/60 font-mono text-xs uppercase tracking-[0.3em]">Unlock the whispers hidden within the canvas</p>
+        </header>
+  
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+          {/* Left Column: Image Upload */}
+          <div className="space-y-8">
+            <section className="space-y-4">
+              <label className="flex items-center gap-2 text-primary/80 font-display text-sm uppercase tracking-widest">
+                <Upload className="w-4 h-4" />
+                The Encoded Vessel
+              </label>
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className={`relative aspect-square rounded-none overflow-hidden border-2 border-dashed border-primary/20 bg-surface-low hover:bg-surface-highest transition-all cursor-pointer group flex flex-col items-center justify-center gap-4 ${image ? 'border-solid border-secondary/50' : ''}`}
+              >
+                {image ? (
+                  <img src={image} alt="Encoded Vessel" className="w-full h-full object-cover" />
+                ) : (
+                  <>
+                    <div className="w-16 h-16 rounded-full bg-secondary/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Upload className="w-8 h-8 text-secondary/50" />
+                    </div>
+                    <span className="text-secondary/40 text-xs uppercase tracking-widest font-display">Upload Sealed Image</span>
+                  </>
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-primary/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+              </div>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImageUpload}
+                accept="image/*"
+                className="hidden"
+              />
+            </section>
+          </div>
+  
+          {/* Right Column: Face Key & Action */}
+          <div className="space-y-8">
+            <section className="space-y-4">
+              <label className="flex items-center gap-2 text-primary/80 font-display text-sm uppercase tracking-widest">
+                <Lock className="w-4 h-4" />
+                The Biometric Key
+              </label>
+              <Camera onCapture={(embedding) => setFaceEmbedding(Array.isArray(embedding) ? embedding[0] : embedding)} onReset={() => setFaceEmbedding(null)} />
+            </section>
+  
+            <div className="pt-8 space-y-4">
+              <button
+                onClick={handleDecode}
+                disabled={!image || !faceEmbedding || isDecoding}
+                className="w-full py-4 bg-secondary hover:bg-secondary/90 text-surface rounded-none font-display text-xl uppercase tracking-[0.2em] shadow-lg shadow-secondary/40 transition-all disabled:opacity-50 disabled:grayscale group relative overflow-hidden"
+              >
+                <div className="relative z-10 flex items-center justify-center gap-3">
+                  {isDecoding ? <Loader2 className="w-6 h-6 animate-spin" /> : <Unlock className="w-6 h-6 group-hover:scale-110 transition-transform" />}
+                  <span>Unlock Arcana</span>
+                </div>
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+              </button>
+  
+              {error && (
+                <motion.div 
+                  initial={{ x: -10 }}
+                  animate={{ x: [ -10, 10, -10, 10, 0 ] }}
+                  transition={{ duration: 0.4 }}
+                  className="flex items-center gap-2 p-4 bg-wax/10 border border-wax/30 rounded-none text-wax text-sm font-mono italic"
+                >
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <p>{error}</p>
+                </motion.div>
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-primary/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
             </div>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleImageUpload}
-              accept="image/*"
-              className="hidden"
-            />
-          </section>
-        </div>
-
-        {/* Right Column: Face Key & Action */}
-        <div className="space-y-8">
-          <section className="space-y-4">
-            <label className="flex items-center gap-2 text-primary/80 font-display text-sm uppercase tracking-widest">
-              <Lock className="w-4 h-4" />
-              The Biometric Key
-            </label>
-            <Camera onCapture={(embedding) => setFaceEmbedding(Array.isArray(embedding) ? embedding[0] : embedding)} onReset={() => setFaceEmbedding(null)} />
-          </section>
-
-          <div className="pt-8 space-y-4">
-            <button
-              onClick={handleDecode}
-              disabled={!image || !faceEmbedding || isDecoding}
-              className="w-full py-4 bg-secondary hover:bg-secondary/90 text-surface rounded-none font-display text-xl uppercase tracking-[0.2em] shadow-lg shadow-secondary/40 transition-all disabled:opacity-50 disabled:grayscale group relative overflow-hidden"
-            >
-              <div className="relative z-10 flex items-center justify-center gap-3">
-                {isDecoding ? <Loader2 className="w-6 h-6 animate-spin" /> : <Unlock className="w-6 h-6 group-hover:scale-110 transition-transform" />}
-                <span>Unlock Arcana</span>
-              </div>
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-            </button>
-
-            {error && (
-              <div className="flex items-center gap-2 p-4 bg-wax/10 border border-wax/30 rounded-none text-wax text-sm font-mono italic">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <p>{error}</p>
-              </div>
-            )}
           </div>
         </div>
-      </div>
 
       <AnimatePresence>
         {secretMessage && (

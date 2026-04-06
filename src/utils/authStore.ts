@@ -9,6 +9,7 @@ export interface VitraProfile {
   name: string;
   enrollmentDate: string;
   sketch: number[]; // Fuzzy extractor sketch for biometric recovery
+  identityToken: string; // Challenge/Response token for verifying login key
 }
 
 const PROFILE_KEY = 'vitra_scholar_profile';

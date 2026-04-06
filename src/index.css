@@ -20,10 +20,8 @@
   --radius-none: 0px;
 }
 
-@layer base {
-  body {
-    @apply bg-surface text-primary font-body selection:bg-secondary/20;
-  }
+body {
+  @apply bg-surface text-primary font-body selection:bg-secondary/20;
 }
 
 @layer utilities {

@@ -91,43 +91,44 @@ export const euclideanDistance = (a: Float32Array, b: Float32Array): number => {
   return Math.sqrt(sum);
 };
 
-export const minMaxScale = (descriptor: Float32Array): Float32Array => {
-  let min = Infinity;
-  let max = -Infinity;
-  for (let i = 0; i < descriptor.length; i++) {
-    if (descriptor[i] < min) min = descriptor[i];
-    if (descriptor[i] > max) max = descriptor[i];
-  }
-  const range = max - min;
-  const scaled = new Float32Array(descriptor.length);
-  if (range === 0) return descriptor;
-  for (let i = 0; i < descriptor.length; i++) {
-    scaled[i] = (descriptor[i] - min) / range;
-  }
-  return scaled;
-};
+/**
+ * Robust Biometric Binarization
+ * Instead of volatile minMaxScale, we use fixed thresholding.
+ * Face descriptors from face-api.js are L2-normalized, typically in range [-0.2, 0.2].
+ */
 
 export const deriveKeyAndSketch = (embedding: Float32Array): { key: string, sketch: number[] } => {
-  const scaled = minMaxScale(embedding);
   const sketch: number[] = [];
   let bitstring = '';
-  for (let i = 0; i < scaled.length; i++) {
-    const bit = scaled[i] >= 0.5 ? 1 : 0;
+  
+  for (let i = 0; i < embedding.length; i++) {
+    // 1. Identify the bit via fixed threshold (0)
+    const bit = embedding[i] >= 0 ? 1 : 0;
     bitstring += bit.toString();
-    sketch.push(Number((scaled[i] - bit).toFixed(4)));
+    
+    // 2. The Sketch (Fuzzy Commitment)
+    // We store a "nudge" that would move this specific value to a highly stable 
+    // position (+0.1 or -0.1) far from the 0-threshold.
+    const stablePoint = bit === 1 ? 0.1 : -0.1;
+    sketch.push(Number((stablePoint - embedding[i]).toFixed(4)));
   }
+  
   const key = CryptoJS.SHA256(bitstring).toString();
   return { key, sketch };
 };
 
 export const deriveKeyWithSketch = (embedding: Float32Array, sketch: number[]): string => {
-  const scaled = minMaxScale(embedding);
   let bitstring = '';
-  for (let i = 0; i < scaled.length; i++) {
-    const corrected = scaled[i] - sketch[i];
-    const bit = corrected >= 0.5 ? 1 : 0;
+  
+  for (let i = 0; i < embedding.length; i++) {
+    // 1. Apply the stored Nudge (Sketch) to correct the new scan
+    const corrected = embedding[i] + sketch[i];
+    
+    // 2. Threshold the corrected value
+    const bit = corrected >= 0 ? 1 : 0;
     bitstring += bit.toString();
   }
+  
   return CryptoJS.SHA256(bitstring).toString();
 };
 

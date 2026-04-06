@@ -6,7 +6,7 @@ import { loadModels } from '../utils/faceKey';
 interface AuthContextType {
   profile: VitraProfile | null;
   isIdentified: boolean;
-  enroll: (name: string, sketch: number[]) => void;
+  enroll: (name: string, sketch: number[], identityToken: string) => void;
   login: () => void;
   burnIdentity: () => void;
   lockSanctum: () => void;
@@ -29,11 +29,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  const enroll = (name: string, sketch: number[]) => {
+  const enroll = (name: string, sketch: number[], identityToken: string) => {
     const newProfile: VitraProfile = {
       name,
       enrollmentDate: new Date().toISOString(),
-      sketch
+      sketch,
+      identityToken
     };
     saveProfile(newProfile);
     setProfile(newProfile);
