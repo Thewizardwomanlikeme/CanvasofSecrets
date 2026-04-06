@@ -2,7 +2,13 @@
 /**
  * Steganography Utility (LSB)
  * Encodes and decodes binary data into the Least Significant Bit of an image's pixel channels.
+ * 
+ * New Protocol: 
+ * [8 bytes Magic Prefix] + [4 bytes Length (Uint32)] + [N bytes Payload]
  */
+
+const MAGIC_PREFIX = "[ARCANA]"; // 8 chars = 8 bytes
+const PREFIX_BINARY = MAGIC_PREFIX.split('').map(c => c.charCodeAt(0).toString(2).padStart(8, '0')).join('');
 
 export const encodeMessage = (
   canvas: HTMLCanvasElement,
@@ -15,27 +21,38 @@ export const encodeMessage = (
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = imageData.data;
 
-  // 1. Prepare the payload: [Message] length
-  // We strictly store zero biometric signatures or fragments.
+  // 1. Prepare payload
   const payloadData: any = { m: message };
   if (sketch) payloadData.s = sketch;
-  const payload = JSON.stringify(payloadData);
-  const binary = stringToBinary(payload);
+  const payloadStr = JSON.stringify(payloadData);
+  
+  // 2. Convert to Binary with Header
+  const encoder = new TextEncoder();
+  const payloadBytes = encoder.encode(payloadStr);
+  const length = payloadBytes.length;
+  
+  // Magic Prefix (already defined as binary string)
+  let binary = PREFIX_BINARY;
+  
+  // Length (32 bits / 4 bytes)
+  const lengthBinary = length.toString(2).padStart(32, '0');
+  binary += lengthBinary;
+  
+  // Payload bytes
+  for (let i = 0; i < payloadBytes.length; i++) {
+    binary += payloadBytes[i].toString(2).padStart(8, '0');
+  }
 
-  // Check if image is large enough
-  // Each pixel has 4 channels (RGBA), but we only use RGB for stability.
-  // So 3 bits per pixel.
-  if (binary.length > canvas.width * canvas.height * 3) {
+  // Check if image is large enough (3 bits per pixel: RGB)
+  if (binary.length > (canvas.width * canvas.height * 3)) {
     throw new Error('Message is too long for this image size.');
   }
 
-  // 2. Embed binary into LSB of RGB channels
+  // 3. Embed binary into LSB of RGB channels
   let bitIndex = 0;
   for (let i = 0; i < data.length && bitIndex < binary.length; i++) {
-    if (i % 4 === 3) continue; // Skip Alpha channel
-
-    // Clear the LSB and set it to the binary bit
-    data[i] = (data[i] & 0xfe) | parseInt(binary[bitIndex]);
+    if (i % 4 === 3) continue; // Skip Alpha
+    data[i] = (data[i] & 0xfe) | (binary[bitIndex] === '1' ? 1 : 0);
     bitIndex++;
   }
 
@@ -52,24 +69,65 @@ export const decodeMessage = (
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = imageData.data;
 
-  // 1. Extract all LSBs from RGB channels
-  let binary = '';
-  for (let i = 0; i < data.length; i++) {
-    if (i % 4 === 3) continue; // Skip Alpha channel
-    binary += (data[i] & 1).toString();
+  // 1. Extract enough LSBs to check for prefix (8 bytes = 64 bits)
+  // Actually, we'll extract them until we find the prefix or hit a limit
+  // For efficiency, let's extract bits in chunks
+  
+  let allBits = "";
+  let bitCount = 0;
+  const totalPixels = data.length / 4;
+  const maxScanBits = Math.min(data.length, 1000000); // Scan up to ~1MB of bits for efficiency 
+
+  // Fast scan for prefix
+  for (let i = 0; i < data.length && bitCount < maxScanBits; i++) {
+    if (i % 4 === 3) continue;
+    allBits += (data[i] & 1).toString();
+    bitCount++;
+    
+    // Check if we have enough for prefix + length
+    if (bitCount === 64 + 32) {
+       const prefix = binaryToString(allBits.slice(0, 64));
+       if (prefix === MAGIC_PREFIX) {
+         // Found robust header!
+         const lengthBits = allBits.slice(64, 96);
+         const payloadLength = parseInt(lengthBits, 2);
+         const requiredBits = 64 + 32 + (payloadLength * 8);
+         
+         // Continue extracting until we have all bits
+         let currentI = i + 1;
+         while (allBits.length < requiredBits && currentI < data.length) {
+           if (currentI % 4 === 3) { currentI++; continue; }
+           allBits += (data[currentI] & 1).toString();
+           currentI++;
+         }
+         
+         if (allBits.length < requiredBits) return null;
+         
+         const payloadBinary = allBits.slice(96, requiredBits);
+         const payloadStr = binaryToString(payloadBinary);
+         try {
+           const payload = JSON.parse(payloadStr);
+           return { message: payload.m, sketch: payload.s };
+         } catch (e) {
+           console.error("Robust decode failed:", e);
+           return null;
+         }
+       }
+    }
   }
 
-  // 2. Convert binary back to string and find the JSON payload
-  const fullText = binaryToString(binary);
+  // 2. Fallback: Legacy Scan (Find '{' and '}')
+  // If prefix not found at the start, try legacy parsing
+  console.warn("[Steganography] Magic prefix not found. Attempting legacy recovery...");
+  
+  // Extract all bits for legacy scan (limited to avoid crash on massive images)
+  const legacyBits = allBits.length > 500000 ? allBits : extractAllBits(data, 1000000);
+  const fullText = binaryToString(legacyBits);
   
   try {
     const start = fullText.indexOf('{');
     if (start === -1) return null;
     
-    // To handle secrets that contain '}', we find the last '}' in the entire string
-    // and attempt to parse. If that fails, we can incrementally search backwards, 
-    // but usually the first '{' and last '}' will capture the payload correctly 
-    // unless there is significant high-bit noise that looks like JSON.
     const lastEnd = fullText.lastIndexOf('}');
     if (lastEnd === -1 || lastEnd <= start) return null;
 
@@ -78,30 +136,31 @@ export const decodeMessage = (
     
     if (payload.m) {
       return { message: payload.m, sketch: payload.s };
-    } else {
-      // In case there are multiple '}', we could try to find the shortest valid JSON 
-      // but 'lastIndexOf' is a safe bet for the way we encode.
-      return null;
     }
   } catch (e) {
-    console.error('Decoding error:', e);
     return null;
   }
+
+  return null;
 };
 
-const stringToBinary = (str: string): string => {
-  return str
-    .split('')
-    .map((char) => char.charCodeAt(0).toString(2).padStart(8, '0'))
-    .join('');
+// --- Helpers ---
+
+const extractAllBits = (data: Uint8ClampedArray, limit: number): string => {
+  let bits = "";
+  let count = 0;
+  for (let i = 0; i < data.length && count < limit; i++) {
+    if (i % 4 === 3) continue;
+    bits += (data[i] & 1).toString();
+    count++;
+  }
+  return bits;
 };
 
 const binaryToString = (binary: string): string => {
-  let str = '';
-  for (let i = 0; i < binary.length; i += 8) {
-    const byte = binary.slice(i, i + 8);
-    if (byte.length < 8) break;
-    str += String.fromCharCode(parseInt(byte, 2));
+  const bytes = new Uint8Array(Math.floor(binary.length / 8));
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(binary.slice(i * 8, i * 8 + 8), 2);
   }
-  return str;
+  return new TextDecoder().decode(bytes);
 };
